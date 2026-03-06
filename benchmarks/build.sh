@@ -1,4 +1,4 @@
-!/bin/bash
+#!/bin/bash
 
 #List of all functions
 pypy_functions=( bfs dfs dynamic-html mst pagerank compress upload thumbnail video )
