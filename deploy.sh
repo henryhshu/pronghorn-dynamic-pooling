@@ -72,7 +72,7 @@ echo "      volumes:
 # Default configuration
 nodes=3
 cpus=2
-memory="8G"
+memory="4G"
 disk_size="50G"
 
 # Bootstrap The Nodes
