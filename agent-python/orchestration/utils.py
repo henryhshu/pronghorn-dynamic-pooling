@@ -1,4 +1,4 @@
-from . import ColdStartStrategy, FixedStrategy, RequestCentricStrategy
+from . import ColdStartStrategy, FixedStrategy, RequestCentricStrategy, DynamicSystemStrategy
 from . import Checkpoint, Parameters
 import json
 import os
@@ -15,6 +15,8 @@ def cr_deserialize(payload: str, client: Minio):
             return ColdStartStrategy(Parameters(), [])
         elif strategy_env == "fixed&request_to_checkpoint=1":
             return FixedStrategy(Parameters(), [], 1)
+        elif strategy_env == "dynamic_system":
+            return DynamicSystemStrategy(Parameters(), [])
         else:
             return RequestCentricStrategy(Parameters(), [])
     obj = json.loads(payload)
@@ -37,3 +39,21 @@ def cr_deserialize(payload: str, client: Minio):
         )
         strategy.weights = np.array(obj["weights"])
         return strategy
+    elif strategy == "DynamicSystem":
+        strat = DynamicSystemStrategy(
+            workload,
+            pool,
+            max_pool_size=obj["max_pool_size"],
+            min_pool_size=obj["min_pool_size"],
+            base_pool_size=obj["base_pool_size"],
+            p=obj["p"],
+            gamma=obj["gamma"],
+            eps=obj["eps"],
+            low_var_thresh=obj["low_var_thresh"],
+            high_var_thresh=obj["high_var_thresh"],
+            variance_window=obj["variance_window"],
+        )
+        strat.weights = np.array(obj["weights"])
+        strat._recent_latencies = obj["recent_latencies"]
+        strat._effective_capacity = obj["effective_capacity"]
+        return strat
