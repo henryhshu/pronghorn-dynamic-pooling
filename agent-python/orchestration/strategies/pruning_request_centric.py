@@ -16,7 +16,8 @@ How the helpers fit together
    b) EVICT IF CONVERGED (optional shrink)
       - _should_shrink_converged() -> True if _is_variance_converged() and
         current pool size > _target_size_converged().
-      - _is_variance_converged() -> True when max(var_response_time) in pool <= threshold.
+      - _is_variance_converged() uses EMA of mean(pool variances): converged when
+        alpha <= converged_ratio * previous_ema; when alpha > previous_ema we don't shrink (grow again).
       - _target_size_converged() -> min_pool_size + round(ratio * buffer_max), where
         ratio = max_var/threshold and buffer_max is headroom or converged_shrink_buffer cap.
       - If True: _shrink_pool_converged() keeps top _target_size_converged() by score, deletes rest.
@@ -55,7 +56,12 @@ VAR_EPS = 1.0
 DEFAULT_MIN_POOL_SIZE = 3  #Don't prune below this; avoid over-shrinking when pool is small
 #TODO: Hyperparams (need to tune)
 DEFAULT_LATENCY_RATIO_THRESHOLD = 1.2  #Don't prune if max(avg_latency) <= baseline * this (everything "well enough")
-# When max variance in pool is below this, treat as "converged" and shrink toward min_pool_size
+# Adaptive variance convergence (EMA): alpha = mean(pool variances). EMA_new = ema_decay * prev_ema + ema_alpha * alpha.
+# Converged when alpha <= converged_ratio * previous_ema (shrink). Grow again when alpha > previous_ema.
+DEFAULT_VARIANCE_EMA_DECAY = 0.9
+DEFAULT_VARIANCE_EMA_ALPHA = 0.1
+DEFAULT_VARIANCE_CONVERGED_RATIO = 0.5  # alpha <= this * previous_ema -> converged
+# Fallback scale for ratio when EMA not yet set (e.g. _target_size_converged)
 DEFAULT_VARIANCE_CONVERGED_THRESHOLD = 100.0
 # Max extra slots when variance is at threshold: None = use full headroom (max_capacity - min_pool_size)
 DEFAULT_CONVERGED_SHRINK_BUFFER = None
@@ -81,6 +87,9 @@ class PruningRequestCentricStrategy(RequestCentricStrategy):
         min_pool_size: int = DEFAULT_MIN_POOL_SIZE,
         latency_ratio_threshold: float = DEFAULT_LATENCY_RATIO_THRESHOLD,
         variance_converged_threshold: float = DEFAULT_VARIANCE_CONVERGED_THRESHOLD,
+        variance_ema_decay: float = DEFAULT_VARIANCE_EMA_DECAY,
+        variance_ema_alpha: float = DEFAULT_VARIANCE_EMA_ALPHA,
+        variance_converged_ratio: float = DEFAULT_VARIANCE_CONVERGED_RATIO,
         converged_shrink_buffer: Optional[int] = DEFAULT_CONVERGED_SHRINK_BUFFER,  # None = use full headroom
         p: float = DEFAULT_P,
         gamma: float = DEFAULT_GAMMA,
@@ -91,7 +100,11 @@ class PruningRequestCentricStrategy(RequestCentricStrategy):
         self.min_pool_size = min_pool_size
         self.latency_ratio_threshold = latency_ratio_threshold
         self.variance_converged_threshold = variance_converged_threshold
+        self.variance_ema_decay = variance_ema_decay
+        self.variance_ema_alpha = variance_ema_alpha
+        self.variance_converged_ratio = variance_converged_ratio
         self.converged_shrink_buffer = converged_shrink_buffer
+        self._variance_ema: Optional[float] = None  # EMA of mean(pool variances); updated when we check converged
 
     def _score_for_checkpoint(self, chkpt):
         """
@@ -156,11 +169,20 @@ class PruningRequestCentricStrategy(RequestCentricStrategy):
         return True
 
     def _is_variance_converged(self) -> bool:
-        """True if all checkpoints have low variance (system likely converged)."""
+        """
+        Adaptive convergence: alpha = mean(pool variances). We keep EMA of alpha.
+        Converged when alpha <= converged_ratio * previous_ema (variance dropped a lot).
+        When alpha > previous_ema we are not converged (grow again). EMA updated every check.
+        """
         if len(self.pool) == 0:
             return False
-        max_var = float(np.max([c.var_response_time for c in self.pool]))
-        return max_var <= self.variance_converged_threshold
+        alpha = float(np.mean([c.var_response_time for c in self.pool]))
+        if self._variance_ema is None:
+            self._variance_ema = alpha
+            return False
+        converged = alpha <= (self.variance_converged_ratio * self._variance_ema)
+        self._variance_ema = self.variance_ema_decay * self._variance_ema + self.variance_ema_alpha * alpha
+        return converged
 
     def _should_shrink_converged(self) -> bool:
         """True if variance has converged and weighted target size is below current size."""
@@ -221,14 +243,14 @@ class PruningRequestCentricStrategy(RequestCentricStrategy):
     def _target_size_converged(self) -> int:
         """
         Target pool size when variance has converged: between min_pool_size and
-        min_pool_size + buffer. Buffer is variable: it scales with ratio (how close
-        max variance is to the threshold) and with headroom (max_capacity - min_pool_size).
-        Optional cap: converged_shrink_buffer (if set) limits the max extra slots.
+        min_pool_size + buffer. Ratio uses EMA when set (max_var / _variance_ema), else
+        fallback to variance_converged_threshold.
         """
         max_var = float(np.max([c.var_response_time for c in self.pool]))
-        if self.variance_converged_threshold <= 0:
+        scale = self._variance_ema if (self._variance_ema is not None and self._variance_ema > 0) else self.variance_converged_threshold
+        if scale <= 0:
             return self.min_pool_size
-        ratio = max_var / self.variance_converged_threshold  # in (0, 1]
+        ratio = min(1.0, max_var / scale)
         headroom = max(0, self.max_capacity - self.min_pool_size)
         buffer_max = headroom if self.converged_shrink_buffer is None else min(self.converged_shrink_buffer, headroom)
         extra = round(ratio * buffer_max)
@@ -257,8 +279,8 @@ class PruningRequestCentricStrategy(RequestCentricStrategy):
             chkpt.delete()
         self.pool[:] = output
         print(
-            f"Variance converged (max var <= {self.variance_converged_threshold}): "
-            f"shrunk pool from {len(by_performance)} to {target_size} (target=min+{target_size - self.min_pool_size})"
+            f"Variance converged (EMA): shrunk pool from {len(by_performance)} to {target_size} "
+            f"(target=min+{target_size - self.min_pool_size})"
         )
 
     @property
@@ -268,5 +290,9 @@ class PruningRequestCentricStrategy(RequestCentricStrategy):
             "min_pool_size": self.min_pool_size,
             "latency_ratio_threshold": self.latency_ratio_threshold,
             "variance_converged_threshold": self.variance_converged_threshold,
+            "variance_ema_decay": self.variance_ema_decay,
+            "variance_ema_alpha": self.variance_ema_alpha,
+            "variance_converged_ratio": self.variance_converged_ratio,
             "converged_shrink_buffer": self.converged_shrink_buffer,
+            "variance_ema": self._variance_ema,
         }

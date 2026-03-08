@@ -121,20 +121,48 @@ def test_target_size_converged_weighted_scales_with_ratio():
     assert strategy._target_size_converged() == min_size + 4  # 6
 
 
-def test_is_variance_converged():
-    """Converged when max var in pool <= threshold."""
+def test_is_variance_converged_ema_first_call_returns_false():
+    """First call to _is_variance_converged sets EMA and returns False (no previous EMA)."""
     workload = Parameters(eviction=5, max_requests=10)
-    low_var = [make_checkpoint([1, 1, 1], i) for i in range(3)]
+    pool = [make_checkpoint([1, 1, 1], i) for i in range(3)]
     strategy = PruningRequestCentricStrategy(
-        workload, low_var, variance_converged_threshold=100.0,
+        workload, pool, variance_converged_ratio=0.5,
     )
-    assert strategy._is_variance_converged() is True
+    assert strategy._is_variance_converged() is False
+    assert strategy._variance_ema is not None
 
-    high_var = [make_checkpoint([1, 50, 100], i) for i in range(3)]  # var large
-    strategy2 = PruningRequestCentricStrategy(
-        workload, high_var, variance_converged_threshold=100.0,
+
+def test_variance_ema_converged_and_grow():
+    """
+    EMA convergence: alpha = mean(pool variances). Converged when alpha <= 0.5 * previous_ema;
+    when alpha > previous_ema we are not converged (grow again). Same strategy, pool mutated.
+    """
+    workload = Parameters(eviction=5, max_requests=10)
+    # Pool with mean var = 100
+    high_var_pool = [
+        make_checkpoint([0], i, avg_response_time=10 * i, var_response_time=100.0) for i in range(5)
+    ]
+    strategy = PruningRequestCentricStrategy(
+        workload, high_var_pool, max_capacity=14, min_pool_size=2,
+        variance_ema_decay=0.9, variance_ema_alpha=0.1, variance_converged_ratio=0.5,
     )
-    assert strategy2._is_variance_converged() is False
+    # First call: EMA was None -> set EMA = 100, return False
+    assert strategy._is_variance_converged() is False
+    assert strategy._variance_ema == 100.0
+
+    # Second call: pool with mean var = 40 (40% of 100). 40 <= 0.5*100 -> converged True. Then EMA = 0.9*100 + 0.1*40 = 94
+    strategy.pool[:] = [
+        make_checkpoint([0], i, avg_response_time=5 * i, var_response_time=40.0) for i in range(5)
+    ]
+    assert strategy._is_variance_converged() is True
+    assert abs(strategy._variance_ema - 94.0) < 1e-6
+
+    # Third call: pool with mean var = 100 again. 100 > 94 (previous EMA) -> not converged (grow again). EMA = 0.9*94 + 0.1*100 = 94.6
+    strategy.pool[:] = [
+        make_checkpoint([0], i, avg_response_time=10 * i, var_response_time=100.0) for i in range(5)
+    ]
+    assert strategy._is_variance_converged() is False
+    assert abs(strategy._variance_ema - 94.6) < 1e-6
 
 
 def test_shrink_pool_converged_reduces_to_target():
@@ -165,7 +193,8 @@ if __name__ == "__main__":
     test_target_size_converged_weighted_with_capped_buffer()
     test_target_size_converged_weighted_default_buffer()
     test_target_size_converged_weighted_scales_with_ratio()
-    test_is_variance_converged()
+    test_is_variance_converged_ema_first_call_returns_false()
+    test_variance_ema_converged_and_grow()
     test_shrink_pool_converged_reduces_to_target()
     print("All lightweight tests passed.")
 
