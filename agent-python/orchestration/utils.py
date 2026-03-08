@@ -1,4 +1,4 @@
-from . import ColdStartStrategy, FixedStrategy, RequestCentricStrategy, DynamicSystemStrategy
+from . import ColdStartStrategy, FixedStrategy, RequestCentricStrategy, DynamicSystemStrategy, DynamicEWMAStrategy
 from . import Checkpoint, Parameters
 import json
 import os
@@ -17,6 +17,8 @@ def cr_deserialize(payload: str, client: Minio):
             return FixedStrategy(Parameters(), [], 1)
         elif strategy_env == "dynamic_system":
             return DynamicSystemStrategy(Parameters(), [])
+        elif strategy_env == "dynamic_ewma":
+            return DynamicEWMAStrategy(Parameters(), [])
         else:
             return RequestCentricStrategy(Parameters(), [])
     obj = json.loads(payload)
@@ -55,5 +57,27 @@ def cr_deserialize(payload: str, client: Minio):
         )
         strat.weights = np.array(obj["weights"])
         strat._recent_latencies = obj["recent_latencies"]
+        strat._effective_capacity = obj["effective_capacity"]
+        return strat
+    elif strategy == "DynamicEWMA":
+        strat = DynamicEWMAStrategy(
+            workload,
+            pool,
+            max_pool_size=obj["max_pool_size"],
+            min_pool_size=obj["min_pool_size"],
+            base_pool_size=obj["base_pool_size"],
+            p=obj["p"],
+            gamma=obj["gamma"],
+            eps=obj["eps"],
+            alpha_fast=obj["alpha_fast"],
+            alpha_slow=obj["alpha_slow"],
+            stable_threshold=obj["stable_threshold"],
+            spike_threshold=obj["spike_threshold"],
+        )
+        strat.weights = np.array(obj["weights"])
+        strat._ewma_mean = obj["ewma_mean"]
+        strat._ewma_dev_fast = obj["ewma_dev_fast"]
+        strat._ewma_dev_slow = obj["ewma_dev_slow"]
+        strat._n_observations = obj["n_observations"]
         strat._effective_capacity = obj["effective_capacity"]
         return strat

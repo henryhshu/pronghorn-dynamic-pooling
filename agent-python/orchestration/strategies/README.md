@@ -13,7 +13,8 @@ All strategies extend the [`CRStrategy`](../strategy.py) base class.
 | **ColdStart** | `cold_start.py` | N/A (no pool) | Always starts from scratch. Useful as a baseline. |
 | **Fixed** | `fixed.py` | Fixed | Snapshots at a predetermined request number. Good for deterministic workloads. |
 | **RequestCentric** | `request_centric.py` | Fixed (`max_capacity`) | Learns per-request latency weights and uses them to intelligently select and time snapshots. Pool is bounded by a static `max_capacity`. |
-| **DynamicSystem** *(new)* | `dynamic_system.py` | **Dynamic** (variance-driven) | Extends RequestCentric's weight-based logic with a pool size that dynamically converges to a local (system-level) optimum based on the variance of recent request latencies. |
+| **DynamicSystem** | `dynamic_system.py` | **Dynamic** (CV-driven) | Extends RequestCentric's weight-based logic with a pool size that dynamically converges to a local (system-level) optimum based on the CV of recent request latencies. |
+| **DynamicEWMA** *(new)* | `dynamic_ewma.py` | **Dynamic** (EWMA-driven) | Uses dual-rate EWMAs to compare recent volatility against baseline volatility. Avoids penalising functions with inherently high but stable variance. |
 
 ---
 
@@ -127,6 +128,97 @@ Balanced tradeoff between memory and snapshot coverage
 
 ---
 
+## DynamicEWMA Strategy
+
+### Motivation
+
+`DynamicSystemStrategy` uses the raw coefficient of variation (CV) of a sliding window of latencies. This works well when variance spikes are transient, but **penalises functions with inherently high variance** — they always get a large pool even when their variance is normal for them.
+
+`DynamicEWMAStrategy` fixes this by using **dual-rate exponentially weighted moving averages (EWMAs)** to separate *transient spikes* from *inherent baseline volatility*.
+
+### How It Works
+
+Two EWMAs of the absolute latency deviation from the running mean are maintained:
+
+- **`ewma_dev_fast`** (decay `alpha_fast=0.30`) — tracks *recent* volatility, reacts quickly to changes.
+- **`ewma_dev_slow`** (decay `alpha_slow=0.05`) — tracks *baseline* volatility, adapts slowly.
+
+The pool-sizing signal is the **ratio**:
+
+```
+volatility_ratio = ewma_dev_fast / ewma_dev_slow
+```
+
+```
+                ratio ≤ 0.5               ratio ≥ 2.0
+               (stable)                  (spike)
+  ┌──────────────┼────────────────────────┼──────────────┐
+  │ min_pool_size│   linear interpolation  │max_pool_size │
+  └──────────────┼────────────────────────┼──────────────┘
+           stable_threshold          spike_threshold
+```
+
+**Key insight**: A function with consistently high variance has *both* EWMAs at high values, so the ratio stays near **1.0** → moderate pool. Only when variance *spikes above the function's own baseline* does the ratio exceed the spike threshold.
+
+### Configuration Parameters
+
+| Parameter | Default | Description |
+|---|---|---|
+| `max_pool_size` | `20` | Absolute maximum pool size. |
+| `min_pool_size` | `2` | Minimum pool size. |
+| `base_pool_size` | `8` | Initial pool capacity before enough data is collected. |
+| `alpha_fast` | `0.30` | Decay rate for the fast (recent) EWMA. |
+| `alpha_slow` | `0.05` | Decay rate for the slow (baseline) EWMA. |
+| `stable_threshold` | `0.5` | Ratio at or below which the pool shrinks to min. |
+| `spike_threshold` | `2.0` | Ratio at or above which the pool grows to max. |
+| `p` | `0.40` | Fraction of top-performing checkpoints to keep during pruning. |
+| `gamma` | `0.10` | Fraction of remaining checkpoints to keep randomly. |
+| `eps` | `0.5` | Exponential smoothing factor for per-request weight updates. |
+
+### Usage
+
+#### Constructing Directly
+
+```python
+from orchestration import DynamicEWMAStrategy, Parameters
+
+strategy = DynamicEWMAStrategy(
+    workload=Parameters(),
+    pool=[],
+    max_pool_size=20,
+    min_pool_size=2,
+    base_pool_size=8,
+    alpha_fast=0.30,
+    alpha_slow=0.05,
+    stable_threshold=0.5,
+    spike_threshold=2.0,
+)
+```
+
+#### Using via ENV variable
+
+```bash
+export ENV="dynamic_ewma,500,10"
+```
+
+### Memory Advantage
+
+Unlike `DynamicSystemStrategy` which stores a window of recent latencies, `DynamicEWMAStrategy` only stores **5 scalar values** (`ewma_mean`, `ewma_dev_fast`, `ewma_dev_slow`, `n_observations`, `effective_capacity`), making it more memory-efficient for serialization across workers.
+
+---
+
+## DynamicSystem vs DynamicEWMA
+
+| Aspect | DynamicSystem | DynamicEWMA |
+|---|---|---|
+| **Signal** | CV of sliding window | EWMA fast/slow ratio |
+| **Memory** | O(window_size) latencies | O(1) — 5 scalars |
+| **Inherently high-variance functions** | Gets large pool (penalised) | Gets moderate pool (ratio ≈ 1.0) |
+| **Reaction to spikes** | Depends on window fill | Immediate via fast EWMA |
+| **Smoothness** | Step changes as data exits window | Smooth exponential decay |
+
+---
+
 ## CRStrategy Interface
 
 All strategies must implement the following methods from the [`CRStrategy`](../strategy.py) base class:
@@ -144,9 +236,16 @@ All strategies must implement the following methods from the [`CRStrategy`](../s
 
 ## Testing
 
-Unit tests for `DynamicSystemStrategy` are in [`tests/test_dynamic_system.py`](../../tests/test_dynamic_system.py). Run them with:
+Run all strategy tests:
 
 ```bash
 cd agent-python
-python -m pytest tests/test_dynamic_system.py -v
+python -m pytest tests/ -v
+```
+
+Run individually:
+
+```bash
+python -m pytest tests/test_dynamic_system.py -v   # 34 tests
+python -m pytest tests/test_dynamic_ewma.py -v     # 36 tests
 ```

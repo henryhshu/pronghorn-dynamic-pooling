@@ -8,5 +8,6 @@ from .strategies.fixed import FixedStrategy
 from .strategies.request_centric import RequestCentricStrategy
 from .strategies.cold_start import ColdStartStrategy
 from .strategies.dynamic_system import DynamicSystemStrategy
+from .strategies.dynamic_ewma import DynamicEWMAStrategy
 
 from .utils import cr_deserialize
