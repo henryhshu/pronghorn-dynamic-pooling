@@ -2,6 +2,8 @@
 
 This directory contains analysis notebooks and scripts for evaluating Pronghorn's orchestration strategies.
 
+**→ Step-by-step instructions (including subset runs: only BFS, only rate 20, only certain strategies): see [RUNNING.md](RUNNING.md).**
+
 ---
 
 ## Notebooks
