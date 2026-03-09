@@ -5,7 +5,7 @@ import random
 import numpy as np
 import copy
 
-DEFAULT_MAX_POOL_SIZE = 20
+DEFAULT_MAX_POOL_SIZE = 14
 DEFAULT_MIN_POOL_SIZE = 2
 DEFAULT_BASE_POOL_SIZE = 8
 
@@ -173,20 +173,29 @@ class DynamicSystemStrategy(CRStrategy):
     def _prune_pool(self):
         """Evict checkpoints until the pool fits within effective_capacity."""
         output = []
+        reference_size = max(self.base_pool_size, self._effective_capacity)
+
         by_performance = sorted(
             self.pool,
             key=lambda c: self._weights_for(c.state.request_number, scalar=True),
             reverse=True,
         )
 
-        keeping_p = round(self.p * len(by_performance))
+        keeping_p = min(round(self.p * reference_size), self._effective_capacity)
         output += by_performance[:keeping_p]
         by_performance = by_performance[keeping_p:]
 
-        keeping_gamma = round(self.gamma * len(by_performance))
-        output += random.choices(
-            by_performance, k=min(keeping_gamma, len(by_performance))
-        )
+        keeping_gamma = 0
+        if keeping_p < self._effective_capacity and by_performance:
+            remaining_slots = self._effective_capacity - keeping_p
+            keeping_gamma = min(
+                round(self.gamma * reference_size),
+                remaining_slots,
+                len(by_performance),
+            )
+            output += random.choices(
+                by_performance, k=keeping_gamma
+            )
 
         output_chkpts = {chkpt for chkpt in output}
         removed = [chkpt for chkpt in self.pool if chkpt not in output_chkpts]

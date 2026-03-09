@@ -3,7 +3,7 @@
 #List of all functions
 # pypy_functions=( bfs dfs dynamic-html mst pagerank compress upload thumbnail video )
 # jvm_functions=( matrix-multiplication simple-hash word-count html-rendering )
-pypy_functions=( bfs mst )
+pypy_functions=( bfs )
 
 
 joined_pypy=$(IFS=','; echo "${pypy_functions[*]}")

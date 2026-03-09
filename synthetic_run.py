@@ -38,12 +38,17 @@ if sys.argv[3] == "pypy":
 else:
    filename += "java-" + test + ".csv"
 BENCHMARKS = sys.argv[5:]
+# STRATEGIES = [
+#     "cold",
+#     "fixed&request_to_checkpoint=1",
+#     "request_centric&max_capacity=12"
+# ]
 STRATEGIES = [
-    "cold",
-    "fixed&request_to_checkpoint=1",
+    "dynamic_system",
     "request_centric&max_capacity=12"
 ]
-RATES = [20, 4, 1]
+# RATES = [20, 4, 1]
+RATES = [20]
 
 ### Configure Logging Handlers
 
@@ -68,7 +73,8 @@ def check_namespace_pods():
     result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     return int(result.stdout.strip())
 
-user="pronghornae"
+# user="pronghornae"
+user="potatocabage"
 
 with open(filename, "a") as output_file:
    for benchmark in BENCHMARKS:
@@ -78,7 +84,8 @@ with open(filename, "a") as output_file:
                 logger.info("Deploying %s function", benchmark)
                 deploy_cmd = f"faas-cli deploy --image={user}/{benchmark} --name={benchmark} --env=ENV={strategy},true,{rate}"
                 deploy_proc = subprocess.run(deploy_cmd.split(" "), capture_output=True)
-                logger.debug("Deploy command response: %s", deploy_proc.stdout.decode("UTF-8"))
+                logger.debug("Deploy command stdout: %s", deploy_proc.stdout.decode("UTF-8"))
+                logger.debug("Deploy command stderr: %s", deploy_proc.stderr.decode("UTF-8"))
                 
                 time.sleep(5)
 
@@ -115,20 +122,24 @@ with open(filename, "a") as output_file:
                 logger.info("Completed strategy: %s for benchmark %s with mutability %s", strategy, benchmark, "1")
                 clean_cmd = f"faas-cli remove {benchmark}"
                 clean_proc = subprocess.run(clean_cmd.split(" "), capture_output=True)
-                logger.debug("Clean command response: %s", clean_proc.stdout.decode("UTF-8"))
+                logger.debug("Clean command stdout: %s", clean_proc.stdout.decode("UTF-8"))
+                logger.debug("Clean command stderr: %s", clean_proc.stderr.decode("UTF-8"))
 
                 # Update the delete and redeploy commands
-                delete_cmd = f"kubectl delete -f {os.path.expanduser('~/pronghorn-artifact/database/pod.yaml')}"
+                delete_cmd = f"kubectl delete -f {os.path.join(os.path.dirname(os.path.abspath(__file__)), 'database/pod.yaml')}"
                 delete_proc = subprocess.run(delete_cmd.split(" "), capture_output=True)
-                logger.debug("Delete command response: %s", delete_proc.stdout.decode("UTF-8"))
+                logger.debug("Delete command stdout: %s", delete_proc.stdout.decode("UTF-8"))
+                logger.debug("Delete command stderr: %s", delete_proc.stderr.decode("UTF-8"))
 
-                redeploy_cmd = f"kubectl apply -f {os.path.expanduser('~/pronghorn-artifact/database/pod.yaml')}"
+                redeploy_cmd = f"kubectl apply -f {os.path.join(os.path.dirname(os.path.abspath(__file__)), 'database/pod.yaml')}"
                 redeploy_proc = subprocess.run(redeploy_cmd.split(" "), capture_output=True)
-                logger.debug("Redeploy command response: %s", redeploy_proc.stdout.decode("UTF-8"))
+                logger.debug("Redeploy command stdout: %s", redeploy_proc.stdout.decode("UTF-8"))
+                logger.debug("Redeploy command stderr: %s", redeploy_proc.stderr.decode("UTF-8"))
 
                 minio_cleanup_cmd = f"mc rb myminio/checkpoints --force"
                 minio_cleanup_proc = subprocess.run(minio_cleanup_cmd.split(" "), capture_output=True)
-                logger.debug("MinIO cleanup command response: %s", minio_cleanup_proc.stdout.decode("UTF-8"))
+                logger.debug("MinIO cleanup command stdout: %s", minio_cleanup_proc.stdout.decode("UTF-8"))
+                logger.debug("MinIO cleanup command stderr: %s", minio_cleanup_proc.stderr.decode("UTF-8"))
 
                 # Check if there are pods in the openfaas-fn namespace
                 while check_namespace_pods() > 0:

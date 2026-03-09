@@ -134,7 +134,7 @@ with open(filename, "a") as output_file:
                 logger.debug("Clean command response: %s", clean_proc.stdout.decode("UTF-8"))
 
                 # Update the delete and redeploy commands
-                delete_cmd = f"kubectl delete -f {os.path.expanduser('~/pronghorn-artifact/database/pod.yaml')}"
+                delete_cmd = f"kubectl delete -f {os.path.expanduser('~/pronghorn-artifact/database/pod.yaml')} --wait"
                 delete_proc = subprocess.run(delete_cmd.split(" "), capture_output=True)
                 logger.debug("Delete command response: %s", delete_proc.stdout.decode("UTF-8"))
 

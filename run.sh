@@ -1,7 +1,7 @@
 #!/bin/bash
 
 if [ "$1" == "basic" ]; then
-  pypy_functions="bfs mst"
+  pypy_functions="bfs"
   python3 synthetic_run.py 500 200 pypy basic $pypy_functions
 elif [ "$1" == "suite" ]; then
   jvm_functions="matrix-multiplication simple-hash word-count html-rendering"
