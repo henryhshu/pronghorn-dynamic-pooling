@@ -15,6 +15,7 @@ This guide explains how to run the cost-analysis notebooks and scripts, and **wh
    Use a environment with: `pandas`, `numpy`, `scipy`, `seaborn`, `matplotlib`, `jupyter`.
 
    From the repo root:
+
    ```bash
    pip install pandas numpy scipy seaborn matplotlib jupyter
    ```
@@ -78,8 +79,8 @@ For **`dynamic_system_analysis.ipynb`** you also need:
    ```python
    eviction_rates = [20]
    ```
-2. Run from the top.  
-   - The convergence table (rate 4) will only show a column for rate 4; if you have no rate-4 data, that column may be empty or show `None`.  
+2. Run from the top.
+   - The convergence table (rate 4) will only show a column for rate 4; if you have no rate-4 data, that column may be empty or show `None`.
    - The “Request Rates” section will only have one rate (20).
 
 ### dynamic_system_analysis.ipynb
@@ -150,22 +151,106 @@ Then run the notebooks from the top.
   Measures CRIU dump/restore times and checkpoint size (Table 4). It is **Linux-specific** (uses `criu`, `pgrep`, etc.). Not required for the notebooks.
 
 - **`table_5.py`**  
-  Reads **`table_4_results.json`** and computes storage and network overhead (Table 5).  
+  Reads **`table_4_results.json`** and computes storage and network overhead (Table 5).
   - Run from the `cost-analysis` directory:  
-    `python table_5.py`  
+    `python table_5.py`
   - If you only have BFS (or only MST), keep only the corresponding entries in `table_4_results.json`; the script will still run and report only those benchmarks.
 
 ---
 
 ## 7. Quick checklist
 
-| What you ran              | What to change |
-|---------------------------|----------------|
-| Only BFS                  | `platforms["pypy"] = ['bfs']` and/or `BENCHMARKS = ['bfs']` |
-| Only MST                  | `platforms["pypy"] = ['mst']` and/or `BENCHMARKS = ['mst']` |
-| Only rate 20              | `eviction_rates = [20]` and/or `EVICTION_RATES = [20]` |
-| Only some strategies      | Set `strategies` / `STRATEGIES` to match your CSV; ensure baseline and eval strategy exist if you use improvement cells |
-| No Java                   | `platforms["jvm"] = []` and/or `INCLUDE_JAVA = False` |
-| No dynamic_system data    | In `dynamic_system_analysis`, remove `'Dynamic System'` from `STRATEGIES` and set `EVAL_STRATEGY_LABEL` to something you have |
+| What you ran           | What to change                                                                                                                |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Only BFS               | `platforms["pypy"] = ['bfs']` and/or `BENCHMARKS = ['bfs']`                                                                   |
+| Only MST               | `platforms["pypy"] = ['mst']` and/or `BENCHMARKS = ['mst']`                                                                   |
+| Only rate 20           | `eviction_rates = [20]` and/or `EVICTION_RATES = [20]`                                                                        |
+| Only some strategies   | Set `strategies` / `STRATEGIES` to match your CSV; ensure baseline and eval strategy exist if you use improvement cells       |
+| No Java                | `platforms["jvm"] = []` and/or `INCLUDE_JAVA = False`                                                                         |
+| No dynamic_system data | In `dynamic_system_analysis`, remove `'Dynamic System'` from `STRATEGIES` and set `EVAL_STRATEGY_LABEL` to something you have |
 
 Running the **Load data** (or data-loading) cell first will show which benchmarks, rates, and strategies are present in your CSVs; use that to align the config with your actual data.
+
+Summary of Changes:
+
+---
+
+## Cost-analysis updates
+
+### 1. **evaluation_analysis.ipynb**
+
+- **Safe data loading**  
+  New “Load data” cell:
+  - Uses `load_csv_safe()` so missing `../data/python-evaluation.csv` or `../data/java-evaluation.csv` no longer crashes the notebook.
+  - Prints which benchmarks, rates, and strategies are present.
+- **Single load**  
+  All analysis uses the DataFrames from that cell; no re-reading of CSVs later.
+- **Convergence**  
+  `convergence()` now takes the pre-loaded DataFrame and returns `None` when there’s no data (e.g. for a benchmark/rate you didn’t run).
+- **Strategy columns**  
+  Cells that compute “improvement” (vs fixed / request_centric) check for the required strategy columns and print a clear message instead of raising if they’re missing.
+- **Benchmarks list**  
+  Geometric-mean section uses benchmarks that are actually in the data (works for BFS-only or any subset).
+- **Config comments**  
+  In the constants cell: what to change for “only BFS”, “only rate 20”, and “only certain strategies”.
+
+### 2. **dynamic_system_analysis.ipynb**
+
+- **Config comments**  
+  In the config cell: subset runs (e.g. only BFS, only rate 20, only certain strategies).
+- **Subset runs**  
+  Already uses `load_csv_safe`, filters by `BENCHMARKS` and `STRATEGIES`, and uses `squeeze=False` for subplots, so one benchmark / one rate is fine.
+
+### 3. **table_4.py & table_5.py**
+
+- **table_4.py**  
+  CRIU dump/restore script; Linux-only. No change.
+- **table_5.py**  
+  Runs correctly; reads `table_4_results.json` and prints storage/network overhead. If you only have BFS (or MST), keep only that entry in the JSON and it will still run.
+
+### 4. **RUNNING.md**
+
+Step-by-step guide added for:
+
+- Prerequisites (data dir, Python deps).
+- Full run (all benchmarks, rates, strategies).
+- **Only BFS** (what to set in each notebook).
+- **Only rate 20** (what to set).
+- **Only certain strategies** (what to set and that you need both fixed and request_centric for improvement stats).
+- Combined subset (e.g. BFS + rate 20 + two strategies).
+- Table 4 / Table 5 usage.
+- Quick checklist table.
+
+### 5. **README.md**
+
+- Linked **RUNNING.md** at the top for step-by-step and subset-run instructions.
+
+---
+
+## Step-by-step (short version)
+
+1. **Prepare**
+   - Create `../data/` if needed.
+   - Put your CSVs there: `python-evaluation.csv`, and optionally `java-evaluation.csv`, `python-evaluation-dynamic-system.csv`.
+
+2. **evaluation_analysis.ipynb**
+   - Run cells in order. First “Load data” cell shows what’s in your CSVs.
+   - **Only BFS:** In the constants cell set  
+     `platforms = {"pypy": ['bfs'], "jvm": []}`.
+   - **Only rate 20:** Set  
+     `eviction_rates = [20]`.
+   - **Only certain strategies:** Set  
+     `strategies = ['cold', 'request_centric&max_capacity=12']` (or your subset).  
+     For improvement stats you need both `fixed&request_to_checkpoint=1` and `request_centric&max_capacity=12` in the data.
+
+3. **dynamic_system_analysis.ipynb**
+   - **Only BFS:** In the config cell set  
+     `BENCHMARKS = ['bfs']`.
+   - **Only rate 20:** Set  
+     `EVICTION_RATES = [20]`.
+   - **Only certain strategies:** Edit `STRATEGIES` to only the strategies you have in the CSV; set `BASELINE_STRATEGY_LABEL` and `EVAL_STRATEGY_LABEL` to match.
+
+4. **table_5.py**
+   - From `cost-analysis`:  
+     `python table_5.py`
+   - With only BFS or only MST, keep only that benchmark in `table_4_results.json`.
