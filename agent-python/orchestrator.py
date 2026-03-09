@@ -248,7 +248,8 @@ def on_container_started() -> "tuple[bool, object]":
 
     checkpoint: Checkpoint = None
 
-    print("Current Pool: ", orch.strategy.pool)
+    pool_req = max((c.state.request_number for c in orch.strategy.pool), default=0)
+    print(f"Current Pool (req={pool_req}, size={len(orch.strategy.pool)}): ", orch.strategy.pool)
 
     if orch.strategy.pool:
         checkpoint = orch.strategy.checkpoint_to_use()
@@ -330,7 +331,7 @@ def on_container_checkpoint(path: str) -> "tuple[bool, str]":
 
     checkpoint = Checkpoint(orch.state.workload_state, path, client=client)
     orch.strategy.pool.append(checkpoint)
-    print("Pool: ", orch.strategy.pool)
+    print(f"Pool (req={orch.state.workload_state.request_number}, size={len(orch.strategy.pool)}): ", orch.strategy.pool)
 
     if save_state(orch):
         return (True, "Registered checkpoint!")

@@ -76,9 +76,66 @@ def check_namespace_pods():
 # user="pronghornae"
 user="potatocabage"
 
+def get_pool_sizes_from_logs(benchmark, strategy, rate, total_requests):
+    """Parse container logs to extract pool sizes at each request number."""
+    cmd = f"kubectl logs -n openfaas-fn -l faas_function={benchmark} --tail=-1"
+    result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+    # Save raw logs for later analysis
+    log_path = os.path.join(log_directory, f"{benchmark}_{strategy}_{rate}_container.log")
+    with open(log_path, "w") as f:
+        f.write(result.stdout)
+
+    # Parse pool sizes from log lines like "Pool (req=5, size=3):" or "Current Pool (req=5, size=3):"
+    pool_pattern = re.compile(r"(?:Current )?Pool \(req=(\d+), size=(\d+)\):")
+    entries = []
+    for line in result.stdout.splitlines():
+        match = pool_pattern.search(line)
+        if match:
+            req_num = int(match.group(1))
+            pool_size = int(match.group(2))
+            entries.append((req_num, pool_size))
+
+    if not entries:
+        logger.warning(f"No pool size entries found in logs for {benchmark}")
+        return []
+
+    # Deduplicate: keep the last entry for each request number (post-checkpoint state)
+    by_req = {}
+    for req_num, pool_size in entries:
+        by_req[req_num] = pool_size
+
+    sorted_reqs = sorted(by_req.keys())
+
+    # Build pool_sizes_list weighted by request duration
+    pool_sizes_list = []
+    for i, req in enumerate(sorted_reqs):
+        if i + 1 < len(sorted_reqs):
+            duration = sorted_reqs[i + 1] - req
+        else:
+            duration = max(1, total_requests - req)
+        pool_sizes_list.extend([by_req[req]] * duration)
+
+    return pool_sizes_list
+
+# Load existing pool sizes or create a new dict
+pool_sizes_file = "data/pool_sizes.json"
+if os.path.exists(pool_sizes_file):
+    try:
+        with open(pool_sizes_file, "r") as f:
+            all_pool_sizes = json.load(f)
+    except:
+        all_pool_sizes = {}
+else:
+    all_pool_sizes = {}
+
 with open(filename, "a") as output_file:
    for benchmark in BENCHMARKS:
+      if benchmark not in all_pool_sizes:
+          all_pool_sizes[benchmark] = {}
       for strategy in STRATEGIES:
+          if strategy not in all_pool_sizes[benchmark]:
+              all_pool_sizes[benchmark][strategy] = {}
           for rate in RATES:
   
                 logger.info("Deploying %s function", benchmark)
@@ -119,6 +176,28 @@ with open(filename, "a") as output_file:
                     else:
                       break
                 output_file.flush()
+
+                # Get pool sizes from container logs
+                pool_sizes_list = get_pool_sizes_from_logs(benchmark, strategy, rate, NUM_REQUESTS)
+
+                # Calculate and record pool size stats
+                if len(pool_sizes_list) > 0:
+                    avg_size = sum(pool_sizes_list) / len(pool_sizes_list)
+                    max_size = max(pool_sizes_list)
+                else:
+                    avg_size = 0.0
+                    max_size = 0
+
+                all_pool_sizes[benchmark][strategy][str(rate)] = {
+                    "average": avg_size,
+                    "max": max_size
+                }
+
+                # Save dynamically to JSON so it is preserved even if the script crashes
+                with open(pool_sizes_file, "w") as f:
+                    json.dump(all_pool_sizes, f, indent=4)
+
+                logger.info(f"Pool sizes for {benchmark} {strategy} {rate}: avg={avg_size:.2f}, max={max_size}")
                 logger.info("Completed strategy: %s for benchmark %s with mutability %s", strategy, benchmark, "1")
                 clean_cmd = f"faas-cli remove {benchmark}"
                 clean_proc = subprocess.run(clean_cmd.split(" "), capture_output=True)
