@@ -3,7 +3,7 @@ from copy import deepcopy
 from minio import Minio
 from minio.deleteobjects import DeleteObject
 import json
-
+import numpy as np
 
 class Checkpoint(object):
     def __init__(
@@ -12,12 +12,24 @@ class Checkpoint(object):
         path: str,
         bucket: str = "checkpoints",
         client: Minio = None,
+        avg_response_time: float = None,
+        var_response_time: float = None,
     ) -> None:
         super().__init__()
         self.bucket = bucket
         self.path = path  # MinIO path prefix
         self.state = deepcopy(state)
         self.client = client
+        #save latencies as feature of checkpoint.
+        latencies = getattr(self.state, "latencies", [])
+        if avg_response_time is not None:
+            self.avg_response_time = avg_response_time
+        else:
+            self.avg_response_time = float(np.mean(latencies)) if latencies else 0.0
+        if var_response_time is not None:
+            self.var_response_time = var_response_time
+        else:
+            self.var_response_time = float(np.var(latencies)) if latencies else 0.0
 
     def __str__(self):
         return f"Checkpoint @ {self.state.request_number}"
@@ -40,11 +52,17 @@ class Checkpoint(object):
             "bucket": self.bucket,
             "path": self.path,
             "state": self.state.serialize(),
+            "avg_response_time": self.avg_response_time,
+            "var_response_time": self.var_response_time,
         }
 
     def deserialize(payload: str, client: Minio):
-        # print("Payload:", payload)
-        
-        # obj = json.loads(payload)
         obj = payload
-        return Checkpoint(WorkloadState.deserialize(obj["state"]), obj["path"], obj["bucket"], client)
+        return Checkpoint(
+            WorkloadState.deserialize(obj["state"]),
+            obj["path"],
+            obj["bucket"],
+            client,
+            avg_response_time=obj.get("avg_response_time"),
+            var_response_time=obj.get("var_response_time"),
+        )
