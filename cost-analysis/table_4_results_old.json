@@ -9,5 +9,16 @@
             "variance": 2.79
         },
         "checkpoint_size": 55.33
+    },
+    "MST": {
+        "dump_time": {
+            "mean": 105.15,
+            "variance": 166.16
+        },
+        "restore_time": {
+            "mean": 24.91,
+            "variance": 6.57
+        },
+        "checkpoint_size": 57.04
     }
 }

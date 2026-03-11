@@ -38,17 +38,38 @@ if sys.argv[3] == "pypy":
 else:
    filename += "java-" + test + ".csv"
 BENCHMARKS = sys.argv[5:]
-# STRATEGIES = [
-#     "cold",
-#     "fixed&request_to_checkpoint=1",
-#     "request_centric&max_capacity=12"
-# ]
 STRATEGIES = [
+    "cold",
+    "fixed&request_to_checkpoint=1",
+    "request_centric&max_capacity=12",
     "dynamic_system",
-    "request_centric&max_capacity=12"
 ]
+# STRATEGIES = [
+#     "request_centric&max_capacity=12",
+#     "dynamic_system",
+# ]
+
+# STRATEGIES = [
+#     "fixed&request_to_checkpoint=1",
+# ]
+
+# Hyperparameters for dynamic_system strategy.
+# These are appended to the ENV variable as key=value pairs so
+# they can be tuned without rebuilding the container image.
+# Set a key to None to use the container's built-in default.
+DYNAMIC_SYSTEM_PARAMS = {
+    "max_pool_size": 14,
+    "min_pool_size": 2,
+    "base_pool_size": 8,
+    "p": 0.40,
+    "gamma": 0.10,
+    "eps": 0.5,
+    "low_var_thresh": 0.10,
+    "high_var_thresh": 1.0,
+    "variance_window": 50,
+}
 # RATES = [20, 4, 1]
-RATES = [20]
+RATES = [1]
 
 ### Configure Logging Handlers
 
@@ -100,21 +121,23 @@ def get_pool_sizes_from_logs(benchmark, strategy, rate, total_requests):
         logger.warning(f"No pool size entries found in logs for {benchmark}")
         return []
 
-    # Deduplicate: keep the last entry for each request number (post-checkpoint state)
-    by_req = {}
-    for req_num, pool_size in entries:
-        by_req[req_num] = pool_size
+    # # Deduplicate: keep the last entry for each request number (post-checkpoint state)
+    # by_req = {}
+    # for req_num, pool_size in entries:
+    #     by_req[req_num] = pool_size
 
-    sorted_reqs = sorted(by_req.keys())
+    # sorted_reqs = sorted(by_req.keys())
 
-    # Build pool_sizes_list weighted by request duration
-    pool_sizes_list = []
-    for i, req in enumerate(sorted_reqs):
-        if i + 1 < len(sorted_reqs):
-            duration = sorted_reqs[i + 1] - req
-        else:
-            duration = max(1, total_requests - req)
-        pool_sizes_list.extend([by_req[req]] * duration)
+    # # Build pool_sizes_list weighted by request duration
+    # pool_sizes_list = []
+    # for i, req in enumerate(sorted_reqs):
+    #     if i + 1 < len(sorted_reqs):
+    #         duration = sorted_reqs[i + 1] - req
+    #     else:
+    #         duration = max(1, total_requests - req)
+    #     pool_sizes_list.extend([by_req[req]] * duration)
+
+    pool_sizes_list = [pool_size for req_num, pool_size in entries]
 
     return pool_sizes_list
 
@@ -139,7 +162,12 @@ with open(filename, "a") as output_file:
           for rate in RATES:
   
                 logger.info("Deploying %s function", benchmark)
-                deploy_cmd = f"faas-cli deploy --image={user}/{benchmark} --name={benchmark} --env=ENV={strategy},true,{rate}"
+                env_val = f"{strategy},true,{rate}"
+                if strategy == "dynamic_system":
+                    for k, v in DYNAMIC_SYSTEM_PARAMS.items():
+                        if v is not None:
+                            env_val += f",{k}={v}"
+                deploy_cmd = f"faas-cli deploy --image={user}/{benchmark} --name={benchmark} --env=ENV={env_val}"
                 deploy_proc = subprocess.run(deploy_cmd.split(" "), capture_output=True)
                 logger.debug("Deploy command stdout: %s", deploy_proc.stdout.decode("UTF-8"))
                 logger.debug("Deploy command stderr: %s", deploy_proc.stderr.decode("UTF-8"))

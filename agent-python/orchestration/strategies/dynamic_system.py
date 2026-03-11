@@ -173,7 +173,8 @@ class DynamicSystemStrategy(CRStrategy):
     def _prune_pool(self):
         """Evict checkpoints until the pool fits within effective_capacity."""
         output = []
-        reference_size = max(self.base_pool_size, self._effective_capacity)
+        # reference_size = max(self.base_pool_size, self._effective_capacity)
+        reference_size = len(self.pool)
 
         by_performance = sorted(
             self.pool,

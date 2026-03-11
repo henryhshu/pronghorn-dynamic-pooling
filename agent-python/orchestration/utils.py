@@ -16,7 +16,29 @@ def cr_deserialize(payload: str, client: Minio):
         elif strategy_env == "fixed&request_to_checkpoint=1":
             return FixedStrategy(Parameters(), [], 1)
         elif strategy_env == "dynamic_system":
-            return DynamicSystemStrategy(Parameters(), [])
+            # Parse optional key=value hyperparameters from ENV indices 3+
+            env_parts = os.getenv("ENV").split(",")
+            dynamic_kwargs = {}
+            type_map = {
+                "max_pool_size": int,
+                "min_pool_size": int,
+                "base_pool_size": int,
+                "p": float,
+                "gamma": float,
+                "eps": float,
+                "low_var_thresh": float,
+                "high_var_thresh": float,
+                "variance_window": int,
+            }
+            for part in env_parts[3:]:
+                if "=" in part:
+                    key, val = part.split("=", 1)
+                    if key in type_map:
+                        dynamic_kwargs[key] = type_map[key](val)
+                    else:
+                        print(f"[DynamicSystem] Unknown parameter: {key}")
+            print(f"[DynamicSystem] Init with params: {dynamic_kwargs}")
+            return DynamicSystemStrategy(Parameters(), [], **dynamic_kwargs)
         else:
             return RequestCentricStrategy(Parameters(), [])
     obj = json.loads(payload)
