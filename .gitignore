@@ -5,3 +5,6 @@ data/python-evaluation.csv
 *.log
 Plot.ipynb
 *.out
+.venv/
+minio-*
+volumes
