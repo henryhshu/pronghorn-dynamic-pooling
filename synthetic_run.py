@@ -43,10 +43,12 @@ STRATEGIES = [
     "fixed&request_to_checkpoint=1",
     "request_centric&max_capacity=12",
     "dynamic_system",
+    "pruning_request_centric&max_capacity=12"
 ]
 # STRATEGIES = [
-#     "request_centric&max_capacity=12",
+#     # "request_centric&max_capacity=12",
 #     "dynamic_system",
+#     "pruning_request_centric&max_capacity=12"
 # ]
 
 # STRATEGIES = [
@@ -69,7 +71,7 @@ DYNAMIC_SYSTEM_PARAMS = {
     "variance_window": 50,
 }
 # RATES = [20, 4, 1]
-RATES = [1]
+RATES = [20, 4, 1]
 
 ### Configure Logging Handlers
 
